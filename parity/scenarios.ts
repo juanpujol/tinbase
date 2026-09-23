@@ -88,6 +88,27 @@ export const SCENARIOS: Scenario[] = [
     expect: (r) => ok(r) && r.inserted && r.deleted === 1,
   },
   {
+    name: 'mutation representation with inner embed',
+    module: 'rest',
+    run: async ({ service, tag }) => {
+      const title = `inner-${tag}`
+      const inserted = await service.from('posts').insert([
+        { title: `${title}-matched`, author_id: 1 },
+        { title: `${title}-unmatched`, author_id: null },
+      ]).select('id')
+      if (inserted.error || !inserted.data) return { error: inserted.error }
+      const ids = inserted.data.map((row: any) => row.id)
+      const updated = await service.from('posts').update({ body: title }, { count: 'exact' }).in('id', ids)
+        .select('title,author:authors!inner(name)').eq('author.name', 'Ada')
+      const persisted = await service.from('posts').select('title,body').in('id', ids).order('title')
+      await service.from('posts').delete().in('id', ids)
+      return { returned: updated.data?.map((row: any) => row.title), count: updated.count,
+        persisted: persisted.data, error: updated.error || persisted.error }
+    },
+    expect: (r) => ok(r) && r.count === 1 && r.returned?.length === 1 && r.returned[0]?.endsWith('-matched') &&
+      r.persisted?.length === 2 && r.persisted.every((row: any) => row.body && row.title.startsWith(row.body)),
+  },
+  {
     name: 'unique violation error code',
     module: 'rest',
     run: async ({ service }) => service.from('authors').insert({ name: 'dup', email: 'ada@example.com' }),
