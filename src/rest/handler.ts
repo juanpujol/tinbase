@@ -78,6 +78,16 @@ function rowsToCsv(rows: unknown[]): string {
   return lines.join('\n')
 }
 
+/** PGRST116: the singular-object media type was requested but `count` rows came back. */
+function notSingular(count: number): ApiError {
+  return new ApiError(406, {
+    code: 'PGRST116',
+    message: 'JSON object requested, multiple (or no) rows returned',
+    details: `The result contains ${count} rows`,
+    hint: null,
+  })
+}
+
 /** Dispatches /rest/v1/* requests to table or RPC handling and builds responses. */
 export class RestHandler {
   /** Schemas reachable through the Data API for non-privileged roles (PostgREST db-schemas). */
@@ -154,7 +164,7 @@ export class RestHandler {
     const info = await this.db.getSchemaInfo(schema)
     const builder = new QueryBuilder(schema, info, q, {
       aliasMutations: !this.db.engine.minimalBootstrap,
-      captureMutationRows: this.db.jsCdc && ['POST', 'PATCH', 'DELETE'].includes(method),
+      captureMutationRows: this.db.jsCdc,
     })
 
     switch (method) {
@@ -268,6 +278,9 @@ export class RestHandler {
       const res = await query(built.sql, built.params)
       if (opts.queryReturning) {
         const result = res.rows[0] as { body: unknown[]; changes?: Record<string, unknown>[] }
+        // PostgREST rolls back a singular mutation whose representation isn't
+        // exactly one row; throwing here aborts the transaction the same way.
+        if (opts.wantsObject && result.body.length !== 1) throw notSingular(result.body.length)
         return { rows: result.body, affected: null, changes: result.changes }
       }
       return { rows: null, affected: res.affectedRows ?? 0, changes: undefined }
@@ -320,14 +333,7 @@ export class RestHandler {
     }
 
     if (opts.wantsObject) {
-      if (rows.length !== 1) {
-        return jsonResponse(406, {
-          code: 'PGRST116',
-          message: 'JSON object requested, multiple (or no) rows returned',
-          details: `The result contains ${rows.length} rows`,
-          hint: null,
-        })
-      }
+      if (rows.length !== 1) throw notSingular(rows.length)
       headers['content-type'] = `${OBJECT_MEDIA}; charset=utf-8`
       return new Response(opts.head ? null : JSON.stringify(rows[0]), {
         status: opts.status,

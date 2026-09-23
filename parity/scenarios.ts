@@ -97,16 +97,34 @@ export const SCENARIOS: Scenario[] = [
         { title: `${title}-unmatched`, author_id: null },
       ]).select('id')
       if (inserted.error || !inserted.data) return { error: inserted.error }
-      const ids = inserted.data.map((row: any) => row.id)
+      const ids = inserted.data.map((row: { id: number }) => row.id)
       const updated = await service.from('posts').update({ body: title }, { count: 'exact' }).in('id', ids)
         .select('title,author:authors!inner(name)').eq('author.name', 'Ada')
       const persisted = await service.from('posts').select('title,body').in('id', ids).order('title')
       await service.from('posts').delete().in('id', ids)
-      return { returned: updated.data?.map((row: any) => row.title), count: updated.count,
+      return { returned: updated.data?.map((row: { title: string }) => row.title), count: updated.count,
         persisted: persisted.data, error: updated.error || persisted.error }
     },
     expect: (r) => ok(r) && r.count === 1 && r.returned?.length === 1 && r.returned[0]?.endsWith('-matched') &&
-      r.persisted?.length === 2 && r.persisted.every((row: any) => row.body && row.title.startsWith(row.body)),
+      r.persisted?.length === 2 &&
+      r.persisted.every((row: { title: string; body: string | null }) => row.body && row.title.startsWith(row.body)),
+  },
+  {
+    name: 'singular mutation with empty inner representation rolls back',
+    module: 'rest',
+    run: async ({ service, tag }) => {
+      const title = `inner-single-${tag}`
+      const inserted = await service.from('posts').insert({ title, author_id: null }).select('id').single()
+      if (inserted.error || !inserted.data) return { error: inserted.error }
+      const id = (inserted.data as { id: number }).id
+      const updated = await service.from('posts').update({ body: title }).eq('id', id)
+        .select('title,author:authors!inner(name)').single()
+      const persisted = await service.from('posts').select('body').eq('id', id).single()
+      await service.from('posts').delete().eq('id', id)
+      return { code: updated.error?.code, body: (persisted.data as { body: string | null } | null)?.body,
+        error: persisted.error }
+    },
+    expect: (r) => ok(r) && r.code === 'PGRST116' && r.body === null,
   },
   {
     name: 'unique violation error code',

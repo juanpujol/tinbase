@@ -110,12 +110,37 @@ describe('mutation representations with !inner embeds', () => {
     expect(persisted.data?.role).toBe('hidden')
   })
 
-  it('reports a singular-response error when the filtered representation is empty, after updating', async () => {
+  it('rolls back a singular mutation whose filtered representation is empty', async () => {
     const { error } = await client.from('assignments').update({ role: 'hidden' }).eq('id', 7)
       .select('id,person:people!inner(name)').single()
     expect(error?.code).toBe('PGRST116')
     const persisted = await client.from('assignments').select('role').eq('id', 7).single()
-    expect(persisted.data?.role).toBe('hidden')
+    expect(persisted.data?.role).toBe('viewer')
+  })
+
+  it('rolls back a singular mutation that affects several rows', async () => {
+    const { error } = await client.from('assignments').update({ role: 'many' }).in('id', [7, 9]).select('id').single()
+    expect(error?.code).toBe('PGRST116')
+    const persisted = await client.from('assignments').select('id,role').in('id', [7, 9]).order('id')
+    expect(persisted.data).toEqual([{ id: 7, role: 'viewer' }, { id: 9, role: 'viewer' }])
+  })
+
+  it('DELETE filters the representation with an alias-scoped condition', async () => {
+    await client.from('assignments').insert([
+      { id: 10, person_id: 1, role: 'gone' },
+      { id: 11, person_id: 2, role: 'gone' },
+    ])
+    const { data, error } = await client
+      .from('assignments')
+      .delete()
+      .in('id', [10, 11])
+      .select('id,person:people!inner(name)')
+      .eq('person.name', 'Linus')
+
+    expect(error).toBeNull()
+    expect(data).toEqual([{ id: 11, person: { name: 'Linus' } }])
+    const persisted = await client.from('assignments').select('id').in('id', [10, 11])
+    expect(persisted.data).toEqual([])
   })
 
   it('reports the filtered response range for a direct count=exact request', async () => {

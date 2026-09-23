@@ -272,7 +272,7 @@ export class QueryBuilder {
     // Minimal-bootstrap engines synthesize CDC in JS. Keep all affected rows
     // separate from the representation, which !inner can filter down.
     const changes = this.captureMutationRows
-      ? `, (select coalesce(json_agg(row_to_json(_c)), ${AGG_EMPTY}) from (select * from _mut) _c) as changes`
+      ? `, (select coalesce(json_agg(row_to_json(_mut)), ${AGG_EMPTY}) from _mut) as changes`
       : ''
     return `with _mut as (${withReturning}) select coalesce(json_agg(row_to_json(_r)), ${AGG_EMPTY}) as body${changes} from (select ${exprs.join(', ')} from _mut${where}) _r`
   }
